@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cotizador de viajes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Asap+Condensed:wght@500;600;700&family=Asap:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: panel lateral tipo app de movilidad (pasos del viaje) + mapa a pantalla completa; en móvil el mapa va arriba y el panel sube como hoja. */
+:root{
+  --brand:#14a37f;          /* color principal de la empresa (cambia por marca) */
+  --brand-2:#2e4f6e;        /* color secundario de la empresa */
+  --brand-strong:color-mix(in srgb, var(--brand) 80%, #000);
+  --brand-soft:color-mix(in srgb, var(--brand) 10%, #fff);
+  --brand-line:color-mix(in srgb, var(--brand) 35%, #fff);
+  --ink:#1c2a2e;
+  --muted:#5a6b69;
+  --faint:#8a9a98;
+  --line:#dce4e2;
+  --bg:#f2f5f4;
+  --surface:#ffffff;
+  --warn:#a65314;
+  --warn-soft:#fdf1e7;
+  --danger:#b3261e;
+  --font-d:'Asap Condensed','Arial Narrow',Arial,sans-serif;
+  --font-b:'Asap',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --r:12px;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font-b);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--brand-strong);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
+
+/* Barra superior */
+.topbar{display:flex;align-items:center;gap:14px;height:58px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:var(--surface);border-bottom:1px solid var(--line);position:relative;z-index:900}
+.wm{font-family:var(--font-d);font-weight:700;font-size:25px;letter-spacing:-.01em;color:var(--brand);white-space:nowrap;line-height:1}
+.wm b{color:var(--ink);font-weight:700}
+.wm small{display:block;font-family:var(--font-b);font-weight:500;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+.tabs{display:flex;gap:4px;background:var(--bg);border-radius:999px;padding:4px;margin-left:auto}
+.tab{border:0;background:transparent;padding:7px 14px;border-radius:999px;font-weight:600;font-size:14px;color:var(--muted)}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(20,40,40,.15)}
+.tenant-pick{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.tenant-pick select{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--surface);font-size:13px;font-weight:600}
+@media (max-width:720px){.tenant-pick span{display:none}.wm small{display:none}.tab{padding:7px 10px}}
+@media (max-width:480px){.tenant-pick{display:none}}
+
+/* Vista cotizador */
+.app{display:grid;grid-template-columns:minmax(360px,440px) 1fr;height:calc(100% - 58px)}
+.sheet{overflow-y:auto;background:var(--surface);border-right:1px solid var(--line);position:relative;z-index:500}
+.sheet-in{padding:22px max(20px,env(safe-area-inset-left,0px)) 28px max(20px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:22px}
+.mapwrap{position:relative;min-height:0}
+#map{position:absolute;inset:0;background:#e7ecea}
+@media (max-width:860px){
+  .app{display:flex;flex-direction:column;height:auto}
+  .mapwrap{height:46vh;min-height:290px;order:-1}
+  .mapchip{left:10px;top:10px;padding:8px 12px;gap:12px}
+  .mapchip strong{font-size:18px;white-space:nowrap}
+  .mapchip i:nth-of-type(2),.mapchip div:nth-of-type(3){display:none}
+  .sheet{overflow:visible;border-right:0;border-radius:20px 20px 0 0;margin-top:-20px;box-shadow:0 -6px 20px rgba(20,40,40,.12)}
+  .sheet::before{content:"";display:block;width:42px;height:5px;border-radius:9px;background:var(--line);margin:10px auto 0}
+  .sheet-in{padding-bottom:110px}
+  .rrow input,.field input,.field select,.stepper input{font-size:16px}
+  .mbar{position:fixed;left:0;right:0;bottom:0;z-index:800;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(20,40,40,.12);display:flex;align-items:center;gap:12px;padding-top:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .mbar .mt{flex:1;min-width:0;border:0;background:transparent;text-align:left;padding:0}
+  .mbar .mt small{display:block;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mbar .mt strong{font-family:var(--font-d);font-size:24px;line-height:1.1}
+  .mbar .cta{width:auto;padding:13px 18px;font-size:15px}
+}
+@media (min-width:861px){.mbar{display:none!important}}
+
+h1{font-family:var(--font-d);font-weight:700;font-size:30px;line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.lede{margin:6px 0 0;color:var(--muted);font-size:14px}
+.sec{display:flex;flex-direction:column;gap:10px}
+.lbl{font-size:12px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 13px;font-size:14px;font-weight:500}
+.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip.quick{font-size:13px;padding:5px 11px;color:var(--muted)}
+.chip.quick:hover{border-color:var(--brand);color:var(--ink)}
+
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border-radius:10px;padding:4px}
+.seg button{border:0;background:transparent;padding:9px;border-radius:7px;font-weight:600;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(20,40,40,.15)}
+
+/* Caja de ruta */
+.route{border:1px solid var(--line);border-radius:var(--r);position:relative;background:var(--surface)}
+.rrow{display:grid;grid-template-columns:34px 1fr auto;align-items:center;position:relative}
+.rrow+.rrow{border-top:1px solid var(--line)}
+.rrow .mk{justify-self:center;width:11px;height:11px}
+.mk.o{border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.mk.d{background:var(--ink)}
+.route::before{content:"";position:absolute;left:16.5px;top:30px;bottom:30px;width:2px;background:repeating-linear-gradient(var(--faint) 0 3px,transparent 3px 6px)}
+.rrow input{border:0;background:transparent;padding:15px 4px;font-size:15px;min-width:0;width:100%}
+.rrow input:focus{outline:none}
+.rrow:focus-within{background:var(--brand-soft)}
+.rrow:first-child{border-radius:var(--r) var(--r) 0 0}.rrow:last-child{border-radius:0 0 var(--r) var(--r)}
+.pinbtn{border:0;background:transparent;padding:8px 10px;color:var(--muted);display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600}
+.pinbtn:hover,.pinbtn[aria-pressed="true"]{color:var(--brand-strong)}
+.swap{position:absolute;right:-13px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;z-index:2;color:var(--muted)}
+.ac{position:absolute;left:0;right:0;top:100%;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(20,40,40,.16);margin-top:4px;max-height:300px;overflow-y:auto;padding:4px}
+.ac button{display:grid;grid-template-columns:22px 1fr;gap:8px;align-items:start;width:100%;text-align:left;border:0;background:transparent;padding:9px 10px;border-radius:7px}
+.ac button[aria-selected="true"],.ac button:hover{background:var(--bg)}
+.ac b{display:block;font-weight:600;font-size:14px}
+.ac span{display:block;font-size:12px;color:var(--muted)}
+.ac .ico{color:var(--faint);padding-top:2px}
+.ac .hint{padding:10px;font-size:13px;color:var(--muted)}
+
+.rstat{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.rstat strong{color:var(--ink);font-size:15px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--warn-soft);color:var(--warn)}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:13px;color:var(--muted);font-weight:500}
+.field input,.field select{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--surface);width:100%;min-width:0}
+.field input:focus,.field select:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.err{color:var(--danger);font-size:13px;margin:0}
+
+.pax{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.pax .t b{display:block;font-weight:600}.pax .t span{font-size:13px;color:var(--muted)}
+.stepper{display:flex;align-items:center;gap:4px}
+.stepper button{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--surface);font-size:20px;line-height:1;display:grid;place-items:center}
+.stepper input{width:48px;text-align:center;border:0;font-weight:700;font-size:18px;background:transparent}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+.check input{width:18px;height:18px;accent-color:var(--brand-strong);margin-top:1px;flex:none}
+.check span small{display:block;color:var(--muted);font-size:12.5px}
+
+/* Vehículos */
+.vlist{display:flex;flex-direction:column;gap:8px}
+.veh{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:var(--r);padding:10px 14px 10px 8px;background:var(--surface);text-align:left;width:100%}
+.veh[aria-checked="true"]{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand);background:var(--brand-soft)}
+.veh svg{width:76px;height:34px;display:block}
+.veh .vn{font-weight:600;font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.veh .vd{font-size:12.5px;color:var(--muted)}
+.veh .vp{font-weight:700;font-size:15px;text-align:right;white-space:nowrap}
+.veh .vp small{display:block;font-weight:500;font-size:11.5px;color:var(--muted)}
+.tag{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:var(--brand-strong);color:#fff;padding:2px 6px;border-radius:4px}
+
+/* Precio */
+.price{border-radius:16px;background:var(--brand-2);color:#fff;padding:18px 18px 16px;display:flex;flex-direction:column;gap:12px}
+.price .top{display:flex;flex-direction:column;gap:6px}
+.price .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.8;font-weight:600}
+.price .total{font-family:var(--font-d);font-weight:700;font-size:40px;line-height:1;letter-spacing:-.01em}
+.price .pp{font-size:13.5px;opacity:.85}
+.price details{border-top:1px solid rgba(255,255,255,.18);padding-top:10px}
+.price summary{cursor:pointer;font-size:13px;font-weight:600;opacity:.9}
+.bd{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13.5px}
+.bd li{display:flex;justify-content:space-between;gap:12px}
+.bd li span:first-child{opacity:.85}
+.bd li.sub{border-top:1px dashed rgba(255,255,255,.25);padding-top:6px;font-weight:600}
+.price .disc{font-size:12px;opacity:.75;margin:0}
+.cta{border:0;border-radius:12px;background:var(--brand-strong);color:#fff;font-weight:700;font-size:16px;padding:15px;width:100%;display:flex;justify-content:center;gap:8px;align-items:center}
+.cta:hover{background:color-mix(in srgb, var(--brand) 70%, #000)}
+.cta:disabled{opacity:.5;cursor:not-allowed}
+.empty{border:1px dashed var(--line);border-radius:var(--r);padding:16px;color:var(--muted);font-size:14px;text-align:center}
+.powered{font-size:12px;color:var(--faint);text-align:center;margin:0}
+.powered b{color:var(--muted)}
+
+/* Overlays del mapa */
+.mapchip{position:absolute;left:14px;top:14px;z-index:450;background:var(--surface);border-radius:12px;padding:10px 14px;box-shadow:0 4px 16px rgba(20,40,40,.18);display:flex;gap:16px;align-items:center}
+.mapchip div{display:flex;flex-direction:column}
+.mapchip small{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mapchip strong{font-family:var(--font-d);font-size:22px;font-weight:700;line-height:1.1}
+.mapchip i{width:1px;align-self:stretch;background:var(--line)}
+.pickbar{position:absolute;left:50%;transform:translateX(-50%);bottom:28px;z-index:450;background:var(--ink);color:#fff;border-radius:999px;padding:10px 16px;font-size:14px;font-weight:600;box-shadow:0 6px 18px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;max-width:calc(100% - 32px)}
+.pickbar button{border:0;background:rgba(255,255,255,.15);color:#fff;border-radius:999px;padding:4px 10px;font-size:13px}
+.picking #map{cursor:crosshair}
+.pin-o,.pin-d{width:22px;height:22px;border-radius:50%;border:4px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.pin-o{background:var(--brand)}
+.pin-d{background:var(--ink);border-radius:4px}
+.leaflet-container{font-family:var(--font-b)}
+
+/* Panel de empresa */
+.panel{height:calc(100% - 58px);overflow-y:auto}
+.panel-in{max-width:1120px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:22px}
+.ph{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.ph h2{font-family:var(--font-d);font-size:32px;margin:0;line-height:1.05}
+.ph p{margin:6px 0 0;color:var(--muted);max-width:62ch}
+.tenants{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.tcard{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:14px;text-align:left;display:flex;gap:12px;align-items:center}
+.tcard[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.tcard .sw{width:34px;height:34px;border-radius:9px;flex:none;display:grid;grid-template-columns:1fr 1fr;overflow:hidden}
+.tcard b{display:block;font-size:15px}
+.tcard span{font-size:12.5px;color:var(--muted)}
+.pgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:16px;align-items:start}
+@media (max-width:900px){.pgrid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.card h3{margin:0;font-size:16px;font-weight:700}
+.card h3+p{margin:-8px 0 0;font-size:13px;color:var(--muted)}
+.colorrow{display:flex;gap:10px}
+.colorrow .field{flex:1}
+.colorrow input[type=color]{height:42px;padding:4px;cursor:pointer}
+.tscroll{overflow-x:auto;margin:0 -4px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:6px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:6px;border-bottom:1px solid var(--line);vertical-align:middle}
+td input{width:100%;min-width:84px;border:1px solid transparent;border-radius:7px;padding:6px 7px;background:var(--bg);text-align:right;font-variant-numeric:tabular-nums}
+td input:focus{outline:none;border-color:var(--brand);background:var(--surface)}
+td.vname{font-weight:600;white-space:nowrap}
+.pct{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.leads td{white-space:nowrap}
+.st{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand-strong)}
+.st.ex{background:var(--bg);color:var(--muted)}
+pre.code{margin:0;background:#16222a;color:#d6e6e2;border-radius:10px;padding:14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto;white-space:pre}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:8px 13px;font-weight:600;font-size:13.5px}
+.btn.dark{background:var(--ink);border-color:var(--ink);color:#fff}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.note{font-size:12.5px;color:var(--muted);margin:0}
+
+/* Diálogo de reserva */
+dialog{border:0;border-radius:18px;padding:0;width:min(460px,calc(100% - 24px));max-height:calc(100% - 24px);box-shadow:0 20px 60px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(16,28,32,.55)}
+.dlg{padding:22px;display:flex;flex-direction:column;gap:14px}
+.dlg h2{font-family:var(--font-d);font-size:26px;margin:0;line-height:1.1}
+.dlg .sum{background:var(--bg);border-radius:12px;padding:12px 14px;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.dlg .sum b{font-size:16px}
+.x{position:absolute;right:12px;top:12px;border:0;background:var(--bg);width:32px;height:32px;border-radius:50%;font-size:18px}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0}
+.steps li{display:grid;grid-template-columns:26px 1fr;gap:10px;position:relative;padding-bottom:14px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:12px;top:24px;bottom:0;width:2px;background:var(--line)}
+.steps li:last-child::before{display:none}
+.steps .dot{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:var(--surface);display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--faint);position:relative;z-index:1}
+.steps li.done .dot{background:var(--brand-strong);border-color:var(--brand-strong);color:#fff}
+.steps b{display:block;font-size:14.5px}
+.steps span{font-size:12.5px;color:var(--muted)}
+.qid{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:13px;background:var(--brand-soft);color:var(--brand-strong);padding:3px 8px;border-radius:6px}
+.wa{display:flex;justify-content:center;align-items:center;gap:8px;border-radius:12px;background:#1f8f4e;color:#fff;font-weight:700;padding:14px;text-decoration:none}
+
+.toast{position:fixed;left:50%;bottom:max(20px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:2000;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:calc(100% - 32px)}
+@media (prefers-reduced-motion:no-preference){.veh,.chip,.tab,.seg button{transition:background .15s,border-color .15s,box-shadow .15s}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wm" id="wordmark">En<b>ruta</b>mos<small>Cotizador de viajes</small></div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-cotizar" aria-selected="true">Cotizar</button>
+    <button class="tab" role="tab" id="tab-panel" aria-selected="false">Panel empresa</button>
+  </div>
+  <label class="tenant-pick"><span>Marca:</span>
+    <select id="tenant-select" aria-label="Empresa"></select>
+  </label>
+</header>
+
+<!-- VISTA COTIZADOR -->
+<main class="app" id="view-cotizar">
+  <aside class="sheet">
+    <div class="sheet-in">
+      <div>
+        <h1 id="hello">¿A dónde viaja tu grupo?</h1>
+        <p class="lede">Marca la ruta y conoce el valor estimado al instante.</p>
+      </div>
+
+      <section class="sec">
+        <span class="lbl">Tipo de servicio</span>
+        <div class="chips" id="services"></div>
+      </section>
+
+      <section class="sec">
+        <div class="seg" id="tripseg">
+          <button type="button" data-round="0" aria-pressed="false">Solo ida</button>
+          <button type="button" data-round="1" aria-pressed="true">Ida y regreso</button>
+        </div>
+
+        <div class="route">
+          <div class="rrow">
+            <span class="mk o" aria-hidden="true"></span>
+            <input id="origin-input" autocomplete="off" placeholder="¿Desde dónde salen?" aria-label="Lugar de salida" role="combobox" aria-expanded="false" aria-controls="origin-list">
+            <button class="pinbtn" type="button" data-pick="origin" aria-pressed="false" title="Elegir en el mapa">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>Mapa</button>
+            <div class="ac" id="origin-list" role="listbox" hidden></div>
+          </div>
+          <div class="rrow">
+            <span class="mk d" aria-hidden="true"></span>
+            <input id="dest-input" autocomplete="off" placeholder="¿A dónde van?" aria-label="Destino" role="combobox" aria-expanded="false" aria-controls="dest-list">
+            <button class="pinbtn" type="button" data-pick="dest" aria-pressed="false" title="Elegir en el mapa">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>Mapa</button>
+            <div class="ac" id="dest-list" role="listbox" hidden></div>
+          </div>
+          <button class="swap" id="swap" type="button" title="Intercambiar salida y destino" aria-label="Intercambiar salida y destino">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></svg>
+          </button>
+        </div>
+        <div class="chips" id="quick"></div>
+        <div class="rstat" id="rstat" hidden></div>
+      </section>
+
+      <section class="sec">
+        <span class="lbl">Fecha y hora</span>
+        <div class="grid2">
+          <div class="field"><label for="dep-date">Salida</label><input type="date" id="dep-date"></div>
+          <div class="field"><label for="dep-time">Hora</label><input type="time" id="dep-time" step="900"></div>
+        </div>
+        <div class="grid2" id="ret-fields">
+          <div class="field"><label for="ret-date">Regreso</label><input type="date" id="ret-date"></div>
+          <div class="field"><label for="ret-time">Hora</label><input type="time" id="ret-time" step="900"></div>
+        </div>
+        <p class="err" id="date-err" hidden></p>
+      </section>
+
+      <section class="sec">
+        <div class="pax">
+          <div class="t"><b>Pasajeros</b><span>Te sugerimos el vehículo ideal</span></div>
+          <div class="stepper">
+            <button type="button" id="pax-minus" aria-label="Menos pasajeros">−</button>
+            <input id="pax" class="num" inputmode="numeric" value="15" aria-label="Número de pasajeros">
+            <button type="button" id="pax-plus" aria-label="Más pasajeros">+</button>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="rough"><span>Parte del recorrido es por vía destapada o rural<small>Asignamos un vehículo apto para ese terreno.</small></span></label>
+      </section>
+
+      <section class="sec">
+        <span class="lbl">Vehículo</span>
+        <div class="vlist" id="vlist" role="radiogroup" aria-label="Vehículo"></div>
+      </section>
+
+      <section class="sec" id="price-sec"></section>
+
+      <p class="powered">Cotizador con tecnología <b>Tramo</b> · Prototipo con tarifas de ejemplo</p>
+    </div>
+  </aside>
+
+  <div class="mapwrap" id="mapwrap">
+    <div id="map" aria-label="Mapa de la ruta"></div>
+    <div class="mapchip" id="mapchip" hidden></div>
+    <div class="pickbar" id="pickbar" hidden><span id="pickmsg"></span><button type="button" id="pickcancel">Cancelar</button></div>
+  </div>
+  <div class="mbar" id="mbar" hidden>
+    <button type="button" class="mt" id="mbar-info" aria-label="Ver detalle del valor"><small id="mbar-veh"></small><strong class="num" id="mbar-total"></strong></button>
+    <button type="button" class="cta" id="mbar-book">Reservar</button>
+  </div>
+</main>
+
+<!-- VISTA PANEL EMPRESA -->
+<section class="panel" id="view-panel" hidden>
+  <div class="panel-in">
+    <div class="ph">
+      <div>
+        <h2 id="panel-title">Panel de la empresa</h2>
+        <p>Cada empresa de transporte especial tiene su propio cotizador con su marca, sus tarifas y sus solicitudes. Cambia algo aquí y míralo en la pestaña Cotizar.</p>
+      </div>
+      <button class="btn" id="reset" type="button">Restablecer datos de ejemplo</button>
+    </div>
+
+    <div class="tenants" id="tenant-cards"></div>
+
+    <div class="pgrid">
+      <div class="card">
+        <h3>Marca</h3>
+        <p>Así se ve el cotizador en el sitio de la empresa.</p>
+        <div class="field"><label for="b-name">Nombre comercial</label><input id="b-name"></div>
+        <div class="colorrow">
+          <div class="field"><label for="b-c1">Color principal</label><input type="color" id="b-c1"></div>
+          <div class="field"><label for="b-c2">Color secundario</label><input type="color" id="b-c2"></div>
+        </div>
+        <div class="field"><label for="b-wa">WhatsApp para reservas</label><input id="b-wa" inputmode="tel"></div>
+        <div class="field"><label for="b-base">Dirección de la sede</label><input id="b-base"></div>
+      </div>
+
+      <div class="card">
+        <h3>Tarifas por vehículo</h3>
+        <p>Valores en pesos. Son de ejemplo: aquí van las tablas reales de la empresa.</p>
+        <div class="tscroll">
+          <table>
+            <thead><tr><th>Vehículo</th><th>Cupo</th><th>Base</th><th>Por km</th><th>Mínimo</th><th>Hora espera</th><th>Viático/noche</th></tr></thead>
+            <tbody id="tariffs"></tbody>
+          </table>
+        </div>
+        <div class="pct">
+          <div class="field"><label for="s-night">Nocturno 7 p.m.–6 a.m. (%)</label><input id="s-night" class="num" inputmode="numeric"></div>
+          <div class="field"><label for="s-holiday">Dominical y festivo (%)</label><input id="s-holiday" class="num" inputmode="numeric"></div>
+          <div class="field"><label for="s-rough">Vía destapada (%)</label><input id="s-rough" class="num" inputmode="numeric"></div>
+          <div class="field"><label for="s-empty">Retorno en vacío, solo ida (%)</label><input id="s-empty" class="num" inputmode="numeric"></div>
+          <div class="field"><label for="s-free">Horas de espera sin costo</label><input id="s-free" class="num" inputmode="numeric"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pgrid">
+      <div class="card">
+        <h3>Instalar en el sitio web</h3>
+        <p>La empresa pega una línea en su página, sin rehacer el sitio.</p>
+        <pre class="code" id="snippet"></pre>
+        <div class="row"><button class="btn dark" type="button" id="copy-snippet">Copiar código</button></div>
+      </div>
+      <div class="card">
+        <h3>Solicitudes recibidas</h3>
+        <p>Cada reserva llega con ruta, vehículo y valor. Desde aquí sigue a contrato y FUEC.</p>
+        <div class="tscroll">
+          <table class="leads">
+            <thead><tr><th>Cotización</th><th>Cliente</th><th>Ruta</th><th>Vehículo</th><th style="text-align:right">Valor</th><th>Estado</th></tr></thead>
+            <tbody id="leads"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Diálogo reserva -->
+<dialog id="dlg">
+  <button class="x" type="button" id="dlg-close" aria-label="Cerrar">×</button>
+  <form class="dlg" id="book-form" novalidate>
+    <h2>Reserva tu viaje</h2>
+    <div class="sum" id="dlg-sum"></div>
+    <div class="field"><label for="f-name">Nombre completo</label><input id="f-name" autocomplete="name" required></div>
+    <div class="grid2">
+      <div class="field"><label for="f-phone">Celular</label><input id="f-phone" inputmode="tel" autocomplete="tel" placeholder="300 000 0000" required></div>
+      <div class="field"><label for="f-mail">Correo</label><input id="f-mail" type="email" autocomplete="email"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label for="f-co">Empresa (opcional)</label><input id="f-co" autocomplete="organization"></div>
+      <div class="field"><label for="f-nit">NIT (opcional)</label><input id="f-nit" inputmode="numeric"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="f-ok"><span>Acepto la política de tratamiento de datos</span></label>
+    <p class="err" id="f-err" hidden></p>
+    <button class="cta" type="submit">Enviar solicitud</button>
+  </form>
+  <div class="dlg" id="done" hidden>
+    <h2>Solicitud enviada</h2>
+    <p style="margin:0">Tu número de cotización es <span class="qid" id="done-id"></span>. Esto sigue ahora:</p>
+    <ol class="steps">
+      <li class="done"><span class="dot">✓</span><div><b>Cotización recibida</b><span id="done-who">La empresa te confirma disponibilidad.</span></div></li>
+      <li><span class="dot">2</span><div><b>Contrato de servicio</b><span>Se firma en línea con los datos del viaje.</span></div></li>
+      <li><span class="dot">3</span><div><b>FUEC generado</b><span>El extracto de contrato sale listo para el conductor.</span></div></li>
+      <li><span class="dot">4</span><div><b>Vehículo y conductor asignados</b><span>Recibes placa, nombre y contacto del conductor.</span></div></li>
+    </ol>
+    <a class="wa" id="done-wa" href="#" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-3.9-4.7-4.1-.1-.2-1.1-1.5-1.1-2.8s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.4.6-.4.4c-.1.2-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.3 2.4 1.5.3.1.5.1.6-.1l.9-1c.2-.3.4-.2.7-.1l1.9.9c.3.1.5.2.5.3.1.2.1.7-.1 1.2z"/></svg>
+      Enviar resumen por WhatsApp</a>
+    <button class="btn" type="button" id="done-new">Hacer otra cotización</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const cop = new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0});
+const money = n => cop.format(Math.round(n));
+const r1000 = n => Math.round(n/1000)*1000;
+
+/* ---------- Datos de ejemplo ---------- */
+const SERVICES = ['Empresarial','Ejecutivo','Institucional','Ocasional','Turismo'];
+
+const PLACES = {
+  med:[
+    {label:'Aeropuerto José María Córdova',sub:'Rionegro, Antioquia',lat:6.1645,lon:-75.4231,q:'aeropuerto jmc rionegro'},
+    {label:'Guatapé',sub:'Antioquia',lat:6.2329,lon:-75.1584},
+    {label:'Llanogrande',sub:'Rionegro, Antioquia',lat:6.1197,lon:-75.4152},
+    {label:'Santa Fe de Antioquia',sub:'Antioquia',lat:6.5567,lon:-75.8281},
+    {label:'Terminal del Norte',sub:'Medellín',lat:6.2786,lon:-75.5703},
+    {label:'Parque Lleras',sub:'El Poblado, Medellín',lat:6.2087,lon:-75.5677},
+    {label:'Jardín',sub:'Antioquia',lat:5.5983,lon:-75.8197}
+  ],
+  bog:[
+    {label:'Aeropuerto El Dorado',sub:'Bogotá',lat:4.7016,lon:-74.1469},
+    {label:'Catedral de Sal',sub:'Zipaquirá, Cundinamarca',lat:5.0186,lon:-74.0109},
+    {label:'Villa de Leyva',sub:'Boyacá',lat:5.6345,lon:-73.5260},
+    {label:'Chía',sub:'Cundinamarca',lat:4.8583,lon:-74.0583}
+  ],
+  ctg:[
+    {label:'Aeropuerto Rafael Núñez',sub:'Cartagena',lat:10.4424,lon:-75.5130},
+    {label:'Playa Blanca, Barú',sub:'Bolívar',lat:10.2266,lon:-75.6097},
+    {label:'Barranquilla',sub:'Atlántico',lat:10.9685,lon:-74.7813},
+    {label:'Santa Marta',sub:'Magdalena',lat:11.2408,lon:-74.1990}
+  ]
+};
+
+function defaultVehicles(){ return [
+  {id:'cam',name:'Camioneta 4x4',note:'Doble cabina, apta para destapada',cap:4,base:40000,perKm:2800,min:120000,wait:45000,night:150000},
+  {id:'minivan',name:'Minivan',note:'Ejecutivo y aeropuerto',cap:8,base:60000,perKm:3500,min:180000,wait:55000,night:150000},
+  {id:'van',name:'Van',note:'Grupos empresariales y turismo',cap:19,base:80000,perKm:4500,min:260000,wait:65000,night:170000},
+  {id:'buseton',name:'Busetón',note:'Rutas de personal',cap:30,base:120000,perKm:6000,min:400000,wait:85000,night:190000},
+  {id:'bus',name:'Bus',note:'Eventos y excursiones',cap:40,base:150000,perKm:7500,min:550000,wait:100000,night:200000}
+];}
+function defaultSur(){ return {night:15,holiday:20,rough:25,empty:50,freeWait:2}; }
+
+function defaultTenants(){ return {
+  enrutamos:{id:'enrutamos',name:'Enrutamos',demo:false,c1:'#14a37f',c2:'#2e4f6e',wa:'573002888600',region:'med',
+    base:{label:'Sede Enrutamos',sub:'Cra. 43A #14-109, Edificio Nova Tempo, Medellín',lat:6.2196,lon:-75.5724},destIdx:1,
+    vehicles:defaultVehicles(),s:defaultSur()},
+  altiplano:{id:'altiplano',name:'Altiplano Traslados',demo:true,c1:'#d9822b',c2:'#1f2b48',wa:'573000000000',region:'bog',
+    base:{label:'Oficina Altiplano',sub:'Usaquén, Bogotá',lat:4.6949,lon:-74.0307},destIdx:1,
+    vehicles:defaultVehicles(),s:defaultSur()},
+  bahia:{id:'bahia',name:'Bahía Especiales',demo:true,c1:'#d9465a',c2:'#17344d',wa:'573000000001',region:'ctg',
+    base:{label:'Oficina Bahía',sub:'Bocagrande, Cartagena',lat:10.3997,lon:-75.5553},destIdx:2,
+    vehicles:defaultVehicles(),s:defaultSur()}
+};}
+const EXAMPLE_LEADS = [
+  {id:'COT-261020-418',client:'Ejemplo · Laboratorios Andina',route:'Medellín → Guatapé',veh:'Van',total:1185000,ex:true},
+  {id:'COT-261022-087',client:'Ejemplo · Colegio San Marcos',route:'Medellín → Santa Fe de Antioquia',veh:'2 × Busetón',total:3420000,ex:true}
+];
+
+/* Festivos de Colombia (nov 2026 – jun 2027) */
+const HOLIDAYS = new Set(['2026-11-02','2026-11-16','2026-12-08','2026-12-25','2027-01-01','2027-01-11','2027-03-22','2027-03-25','2027-03-26','2027-05-01','2027-05-10','2027-05-31','2027-06-07']);
+
+/* ---------- Almacenamiento local ---------- */
+const KEY = 'tramo-cotizador-demo-v1';
+function load(){
+  try{ const raw = localStorage.getItem(KEY); if(raw){ const d = JSON.parse(raw); if(d && d.tenants && d.tenants.enrutamos) return d; } }catch(e){}
+  return {tenants:defaultTenants(),current:'enrutamos',leads:{}};
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){} }
+let store = load();
+let T = store.tenants[store.current] || store.tenants.enrutamos;
+
+/* ---------- Estado del viaje ---------- */
+const st = {service:'Empresarial',round:true,origin:null,dest:null,route:null,pax:15,rough:false,vehicle:null,picked:false,pick:null};
+
+function ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+$('#dep-date').value = ymd(tomorrow); $('#dep-time').value = '07:00';
+$('#ret-date').value = ymd(tomorrow); $('#ret-time').value = '18:00';
+$('#dep-date').min = ymd(new Date()); $('#ret-date').min = ymd(new Date());
+
+/* ---------- Mapa ---------- */
+const map = L.map('map',{zoomControl:false,attributionControl:true}).setView([6.2442,-75.5812],11);
+L.control.zoom({position:'bottomright'}).addTo(map);
+const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+L.tileLayer(ESRI+'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',{
+  maxZoom:16,attribution:'Mapa base &copy; Esri, HERE, Garmin, &copy; colaboradores de OpenStreetMap'
+}).addTo(map);
+L.tileLayer(ESRI+'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{maxZoom:16}).addTo(map);
+const routeLayer = L.layerGroup().addTo(map);
+const markers = {origin:null,dest:null};
+function pinIcon(kind){ return L.divIcon({className:'',html:'<div class="pin-'+(kind==='origin'?'o':'d')+'"></div>',iconSize:[22,22],iconAnchor:[11,11]}); }
+
+function placeMarker(which){
+  const p = st[which];
+  if(markers[which]){ map.removeLayer(markers[which]); markers[which]=null; }
+  if(!p) return;
+  const m = L.marker([p.lat,p.lon],{icon:pinIcon(which),draggable:true,autoPan:true}).addTo(map);
+  m.bindTooltip(which==='origin'?'Salida':'Destino',{direction:'top',offset:[0,-12]});
+  m.on('dragend',async ()=>{ const ll=m.getLatLng(); const p2 = await reverse(ll.lat,ll.lng); setPoint(which,p2,false); });
+  markers[which]=m;
+}
+
+/* ---------- Servicios de geografía (sin claves) ---------- */
+const CO_BBOX = '-79.1,-4.3,-66.8,12.6';
+function normQuery(q){
+  return q.replace(/\b(cra|kra|kr|cr|carr)\b\.?/gi,'Carrera ')
+          .replace(/\b(cll|cl)\b\.?/gi,'Calle ')
+          .replace(/\b(av|avda)\b\.?/gi,'Avenida ')
+          .replace(/\b(tv|tr|transv)\b\.?/gi,'Transversal ')
+          .replace(/\b(dg)\b\.?/gi,'Diagonal ')
+          .replace(/#/g,' ').replace(/\s+/g,' ').trim();
+}
+function labelFrom(pr){
+  const street = [pr.street, pr.housenumber].filter(Boolean).join(' ');
+  const main = pr.name || street || pr.city || 'Punto seleccionado';
+  const parts = [pr.name && street ? street : null, pr.district || pr.locality, pr.city, pr.state].filter(Boolean);
+  const uniq = parts.filter((x,i)=>parts.indexOf(x)===i && x!==main);
+  return {label:main, sub:uniq.join(', ')};
+}
+async function geocode(q, signal){
+  const c = map.getCenter();
+  const url = 'https://photon.komoot.io/api/?q='+encodeURIComponent(normQuery(q))+'&limit=7&lat='+c.lat.toFixed(4)+'&lon='+c.lng.toFixed(4)+'&bbox='+CO_BBOX;
+  const r = await fetch(url,{signal}); if(!r.ok) throw new Error('geo');
+  const j = await r.json();
+  return (j.features||[]).filter(f=>!f.properties.countrycode || f.properties.countrycode==='CO').map(f=>{
+    const l = labelFrom(f.properties); return {label:l.label,sub:l.sub,lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0]};
+  });
+}
+async function reverse(lat,lon){
+  try{
+    const r = await fetch('https://photon.komoot.io/reverse?lat='+lat+'&lon='+lon+'&limit=1');
+    const j = await r.json(); const f = j.features && j.features[0];
+    if(f){ const l = labelFrom(f.properties); return {label:l.label,sub:l.sub,lat,lon}; }
+  }catch(e){}
+  return {label:'Punto en el mapa',sub:lat.toFixed(5)+', '+lon.toFixed(5),lat,lon};
+}
+function haversine(a,b){
+  const R=6371, toR=x=>x*Math.PI/180;
+  const dLat=toR(b.lat-a.lat), dLon=toR(b.lon-a.lon);
+  const h=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+let routeSeq = 0, routeCtrl = null, routeLine = null;
+async function updateRoute(){
+  placeMarker('origin'); placeMarker('dest');
+  routeLayer.clearLayers(); routeLine = null;
+  if(!(st.origin && st.dest)){
+    st.route=null; renderRouteStat(); recalc();
+    const p = st.origin||st.dest; if(p) map.setView([p.lat,p.lon],13);
+    return;
+  }
+  const seq = ++routeSeq; if(routeCtrl) routeCtrl.abort(); routeCtrl = new AbortController();
+  $('#rstat').hidden=false; $('#rstat').innerHTML='Calculando ruta…';
+  let route;
+  try{
+    const u = 'https://router.project-osrm.org/route/v1/driving/'+st.origin.lon+','+st.origin.lat+';'+st.dest.lon+','+st.dest.lat+'?overview=full&geometries=geojson';
+    const r = await fetch(u,{signal:routeCtrl.signal}); if(!r.ok) throw new Error('route');
+    const j = await r.json(); if(!j.routes||!j.routes.length) throw new Error('noroute');
+    const R = j.routes[0];
+    route = {km:R.distance/1000, min:R.duration/60, coords:R.geometry.coordinates.map(c=>[c[1],c[0]]), approx:false};
+  }catch(e){
+    if(e.name==='AbortError') return;
+    const km = haversine(st.origin,st.dest)*1.35;
+    route = {km, min:km/45*60, coords:[[st.origin.lat,st.origin.lon],[st.dest.lat,st.dest.lon]], approx:true};
+  }
+  if(seq!==routeSeq) return;
+  st.route = route;
+  const brand = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()||'#14a37f';
+  L.polyline(route.coords,{color:'#ffffff',weight:9,opacity:.95}).addTo(routeLayer);
+  routeLine = L.polyline(route.coords,{color:T.c1||brand,weight:5,opacity:1,dashArray:route.approx?'8 10':null}).addTo(routeLayer);
+  map.fitBounds(L.latLngBounds(route.coords),{padding:[60,60],maxZoom:14});
+  renderRouteStat(); recalc();
+}
+function fmtDur(min){ const h=Math.floor(min/60), m=Math.round(min%60); return h? h+' h '+(m? m+' min':'') : m+' min'; }
+function renderRouteStat(){
+  const el=$('#rstat'), chip=$('#mapchip');
+  if(!st.route){ el.hidden=true; chip.hidden=true; return; }
+  const km = Math.round(st.route.km);
+  el.hidden=false;
+  el.innerHTML = '<strong class="num">'+km+' km</strong><span>·</span><span>'+fmtDur(st.route.min)+' por trayecto</span>'+(st.route.approx?' <span class="badge">Ruta aproximada</span>':'');
+  chip.hidden=false;
+  chip.innerHTML = '<div><small>Distancia</small><strong class="num">'+km+' km</strong></div><i></i><div><small>Tiempo</small><strong class="num">'+fmtDur(st.route.min)+'</strong></div>'+(st.round?'<i></i><div><small>Viaje</small><strong>Ida y regreso</strong></div>':'');
+}
+
+/* ---------- Autocompletado ---------- */
+const deacc = s => s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+function localPlaces(){ return [T.base].concat(PLACES[T.region]||[]); }
+function setupAC(which){
+  const input = $('#'+which+'-input'), list = $('#'+which+'-list');
+  let timer=null, items=[], active=-1, ctrl=null;
+  function show(arr, hint){
+    items = arr; active=-1;
+    if(!arr.length && !hint){ close(); return; }
+    list.innerHTML = arr.map((p,i)=>'<button type="button" role="option" data-i="'+i+'" aria-selected="false"><span class="ico">'+(p.local?'★':'⌖')+'</span><span><b>'+esc(p.label)+'</b><span>'+esc(p.sub||'')+'</span></span></button>').join('') + (hint?'<div class="hint">'+hint+'</div>':'');
+    list.hidden=false; input.setAttribute('aria-expanded','true');
+  }
+  function close(){ list.hidden=true; input.setAttribute('aria-expanded','false'); }
+  function choose(i){ const p=items[i]; if(!p) return; close(); setPoint(which,p,true); }
+  async function search(q){
+    const dq = deacc(q);
+    const loc = localPlaces().filter(p=>deacc(p.label+' '+(p.sub||'')+' '+(p.q||'')).includes(dq)).map(p=>Object.assign({local:true},p));
+    if(q.length<3){ show(loc.length?loc:localPlaces().map(p=>Object.assign({local:true},p))); return; }
+    show(loc,'Buscando direcciones…');
+    if(ctrl) ctrl.abort(); ctrl=new AbortController();
+    try{
+      const res = await geocode(q,ctrl.signal);
+      show(loc.concat(res), res.length||loc.length? '' : 'No encontramos esa dirección. Prueba con el barrio o un lugar conocido, o usa <b>Mapa</b> para marcar el punto.');
+    }catch(e){
+      if(e.name==='AbortError') return;
+      show(loc,'Sin conexión al buscador. Usa los lugares sugeridos o marca el punto en el mapa.');
+    }
+  }
+  input.addEventListener('input',()=>{ clearTimeout(timer); const q=input.value.trim(); timer=setTimeout(()=>search(q),280); });
+  input.addEventListener('focus',()=>{ input.select(); search(''); });
+  input.addEventListener('blur',()=>setTimeout(close,160));
+  input.addEventListener('keydown',e=>{
+    if(list.hidden) return;
+    const btns = list.querySelectorAll('button');
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault(); active = (active + (e.key==='ArrowDown'?1:-1) + btns.length) % btns.length;
+      btns.forEach((b,i)=>b.setAttribute('aria-selected',i===active?'true':'false')); btns[active] && btns[active].scrollIntoView({block:'nearest'});
+    }else if(e.key==='Enter'){ e.preventDefault(); choose(active<0?0:active); }
+    else if(e.key==='Escape'){ close(); }
+  });
+  list.addEventListener('mousedown',e=>e.preventDefault());
+  list.addEventListener('click',e=>{ const b=e.target.closest('button[data-i]'); if(b) choose(+b.dataset.i); });
+}
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function setPoint(which,p,route){
+  st[which] = {label:p.label,sub:p.sub||'',lat:p.lat,lon:p.lon};
+  $('#'+which+'-input').value = p.label + (p.sub && !p.local && p.label==='Punto en el mapa' ? ' ('+p.sub+')':'');
+  updateRoute();
+}
+
+/* ---------- Elegir en el mapa ---------- */
+function startPick(which){
+  if(st.pick===which){ stopPick(); return; }
+  st.pick=which;
+  $$('.pinbtn').forEach(b=>b.setAttribute('aria-pressed', b.dataset.pick===which?'true':'false'));
+  $('#mapwrap').classList.add('picking');
+  $('#pickmsg').textContent = which==='origin' ? 'Toca el mapa para marcar la salida' : 'Toca el mapa para marcar el destino';
+  $('#pickbar').hidden=false;
+  if(window.matchMedia('(max-width:860px)').matches) window.scrollTo({top:0,behavior:'smooth'});
+}
+function stopPick(){ st.pick=null; $$('.pinbtn').forEach(b=>b.setAttribute('aria-pressed','false')); $('#mapwrap').classList.remove('picking'); $('#pickbar').hidden=true; }
+map.on('click',async e=>{
+  if(!st.pick) return; const which=st.pick; stopPick();
+  const p = await reverse(e.latlng.lat,e.latlng.lng); setPoint(which,p,true);
+});
+$$('.pinbtn').forEach(b=>b.addEventListener('click',()=>startPick(b.dataset.pick)));
+$('#pickcancel').addEventListener('click',stopPick);
+
+/* ---------- Precio ---------- */
+function dt(d,t){ if(!d||!t) return null; const x=new Date(d+'T'+t); return isNaN(x)?null:x; }
+const isNight = d => { const h=d.getHours(); return h>=19 || h<6; };
+const isHoliday = d => d.getDay()===0 || HOLIDAYS.has(ymd(d));
+function dayStart(d){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
+
+function quoteFor(v,ctx){
+  const qty = Math.ceil(ctx.pax / v.cap);
+  if(qty>3) return null;
+  const s = T.s, km = ctx.km;
+  const lines = [];
+  const kmBill = ctx.round ? km*2 : km*(1 + s.empty/100);
+  let transport = v.base + kmBill*v.perKm;
+  lines.push(['Tarifa base', v.base]);
+  lines.push([ctx.round ? 'Recorrido '+Math.round(km*2)+' km (ida y regreso)' : 'Recorrido '+Math.round(km)+' km + '+s.empty+'% retorno en vacío', kmBill*v.perKm]);
+  if(transport < v.min){ lines.push(['Ajuste a tarifa mínima', v.min-transport]); transport = v.min; }
+  let extra = 0;
+  const night = isNight(ctx.dep) || (ctx.round && ctx.ret && isNight(ctx.ret));
+  const hol = isHoliday(ctx.dep) || (ctx.round && ctx.ret && isHoliday(ctx.ret));
+  if(night && s.night){ const a=transport*s.night/100; extra+=a; lines.push(['Recargo nocturno '+s.night+'%',a]); }
+  if(hol && s.holiday){ const a=transport*s.holiday/100; extra+=a; lines.push(['Recargo dominical o festivo '+s.holiday+'%',a]); }
+  if(ctx.rough && s.rough){ const a=transport*s.rough/100; extra+=a; lines.push(['Recargo vía destapada '+s.rough+'%',a]); }
+  if(ctx.round && ctx.ret){
+    const nights = Math.round((dayStart(ctx.ret)-dayStart(ctx.dep))/864e5);
+    if(nights>=1){ const a=nights*v.night; extra+=a; lines.push(['Viáticos del conductor · '+nights+(nights>1?' noches':' noche'),a]); }
+    else{
+      const gap = (ctx.ret-ctx.dep)/36e5 - 2*ctx.durH;
+      const h = Math.max(0, Math.ceil(gap - s.freeWait));
+      if(h>0){ const a=h*v.wait; extra+=a; lines.push(['Espera en destino · '+h+' h ('+s.freeWait+' h sin costo)',a]); }
+    }
+  }
+  const unit = transport + extra;
+  const total = r1000(unit*qty);
+  return {v,qty,lines,unit,total};
+}
+function context(){
+  if(!st.route) return {error:null,ready:false};
+  const dep = dt($('#dep-date').value,$('#dep-time').value);
+  const ret = st.round ? dt($('#ret-date').value,$('#ret-time').value) : null;
+  if(!dep) return {ready:false,error:'Elige la fecha y hora de salida.'};
+  if(st.round){
+    if(!ret) return {ready:false,error:'Elige la fecha y hora de regreso.'};
+    if(ret <= dep) return {ready:false,error:'El regreso debe ser después de la salida.'};
+    if((ret-dep)/36e5 < 2*st.route.min/60) return {ready:false,error:'No alcanza el tiempo para ir y volver: el trayecto toma '+fmtDur(st.route.min)+' por sentido.'};
+  }
+  return {ready:true,km:st.route.km,durH:st.route.min/60,round:st.round,dep,ret,pax:st.pax,rough:st.rough};
+}
+
+function vehSvg(id){
+  const c='currentColor';
+  const shapes = {
+    cam:'<path d="M14 24V16l8-7h16l6 7h4v8z" fill="var(--ink)"/><path d="M48 16h22v8H48z" fill="var(--ink)" opacity=".75"/><path d="M24 15l5-4.5h8l4 4.5z" fill="#fff" opacity=".9"/>',
+    minivan:'<path d="M12 24V13q0-4 5-4h34q6 0 12 8l3 3v4z" fill="var(--ink)"/><path d="M18 12h10v5H18zM31 12h10v5H31zM44 12h6v5h-6zM53 12l6 5h-6z" fill="#fff" opacity=".9"/>',
+    van:'<path d="M8 24V11q0-4 4-4h48q6 0 10 7l4 6v4z" fill="var(--ink)"/><path d="M13 10h9v6h-9zM25 10h9v6h-9zM37 10h9v6h-9zM49 10h9v6h-9zM61 10l6 6h-6z" fill="#fff" opacity=".9"/>',
+    buseton:'<path d="M6 25V9q0-4 4-4h60q6 0 7 6l1 14z" fill="var(--ink)"/><path d="M10 8h10v7H10zM23 8h10v7H23zM36 8h10v7H36zM49 8h10v7H49zM62 8h10v7H62z" fill="#fff" opacity=".9"/>',
+    bus:'<path d="M3 25V7q0-4 4-4h84q4 0 5 5l1 17z" fill="var(--ink)"/><path d="M7 6h11v8H7zM21 6h11v8H21zM35 6h11v8H35zM49 6h11v8H49zM63 6h11v8H63zM77 6h11v8H77z" fill="#fff" opacity=".9"/>'
+  };
+  const wheels = {cam:[24,60],minivan:[22,58],van:[18,62],buseton:[16,66],bus:[16,82]}[id]||[20,60];
+  const w = '<circle cx="'+wheels[0]+'" cy="26" r="5" fill="var(--brand)" stroke="var(--surface)" stroke-width="2.5"/><circle cx="'+wheels[1]+'" cy="26" r="5" fill="var(--brand)" stroke="var(--surface)" stroke-width="2.5"/>';
+  return '<svg viewBox="0 0 100 34" aria-hidden="true">'+(shapes[id]||shapes.van)+w+'</svg>';
+}
+
+let lastQuotes = [];
+function recalc(){
+  const ctx = context();
+  const err = $('#date-err');
+  err.hidden = !ctx.error; err.textContent = ctx.error||'';
+  const vl = $('#vlist');
+  if(!ctx.ready){
+    lastQuotes = []; $('#mbar').hidden = true;
+    vl.innerHTML = T.vehicles.map(v=>{ const fits=Math.ceil(st.pax/v.cap)<=3; return fits?'<div class="veh" aria-disabled="true">'+vehSvg(v.id)+'<div><div class="vn">'+esc(v.name)+'</div><div class="vd">Hasta '+v.cap+' pasajeros · '+esc(v.note)+'</div></div><div class="vp">—</div></div>':''; }).join('');
+    $('#price-sec').innerHTML = '<div class="empty">'+(st.route? (ctx.error||'Completa los datos del viaje.') : 'Marca la salida y el destino para ver el valor del viaje.')+'</div>';
+    return;
+  }
+  const qs = T.vehicles.map(v=>quoteFor(v,ctx)).filter(Boolean);
+  lastQuotes = qs;
+  if(!qs.length){ vl.innerHTML=''; $('#mbar').hidden=true; $('#price-sec').innerHTML='<div class="empty">Para grupos de más de '+(3*Math.max.apply(null,T.vehicles.map(v=>v.cap)))+' pasajeros la empresa arma una cotización especial.</div>'; return; }
+  const best = qs.reduce((a,b)=> b.total<a.total ? b : a);
+  if(!st.picked || !qs.find(q=>q.v.id===st.vehicle)) st.vehicle = best.v.id;
+  vl.innerHTML = qs.map(q=>{
+    const sel = q.v.id===st.vehicle;
+    return '<button type="button" class="veh" role="radio" aria-checked="'+sel+'" data-v="'+q.v.id+'">'+vehSvg(q.v.id)+
+      '<div><div class="vn">'+(q.qty>1? q.qty+' × ':'')+esc(q.v.name)+(q===best?' <span class="tag">Sugerido</span>':'')+'</div><div class="vd">Hasta '+q.v.cap+' pasajeros · '+esc(q.v.note)+'</div></div>'+
+      '<div class="vp num">'+money(q.total)+'<small>'+(st.round?'ida y regreso':'solo ida')+'</small></div></button>';
+  }).join('');
+  renderPrice(qs.find(q=>q.v.id===st.vehicle), ctx);
+}
+function renderPrice(q,ctx){
+  const per = q.total/ctx.pax;
+  const lis = q.lines.map(l=>'<li><span>'+esc(l[0])+'</span><span class="num">'+money(l[1])+'</span></li>').join('') +
+    (q.qty>1 ? '<li class="sub"><span>Por vehículo</span><span class="num">'+money(q.unit)+'</span></li><li><span>× '+q.qty+' vehículos</span><span class="num">'+money(q.unit*q.qty)+'</span></li>' : '') +
+    '<li><span>Peajes</span><span>Según ruta</span></li>';
+  $('#price-sec').innerHTML =
+    '<div class="price">'+
+      '<div class="top"><div><div class="k">Valor estimado</div><div class="total num">'+money(q.total)+'</div></div>'+
+      '<div class="pp num">'+(q.qty>1?q.qty+' × ':'')+esc(q.v.name)+' · ≈ '+money(r1000(per))+' por pasajero</div></div>'+
+      '<details><summary>Ver cómo se calcula</summary><ul class="bd">'+lis+'</ul></details>'+
+      '<p class="disc">Valor sujeto a confirmación de disponibilidad. Servicio bajo contrato con '+esc(T.name)+', empresa habilitada de transporte especial.</p>'+
+    '</div>'+
+    '<button class="cta" type="button" id="book">Reservar este viaje <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>';
+  $('#book').addEventListener('click',openBooking);
+  $('#mbar-veh').textContent = 'Valor estimado · '+(q.qty>1?q.qty+' × ':'')+q.v.name+' · '+(st.round?'ida y regreso':'solo ida');
+  $('#mbar-total').textContent = money(q.total);
+  $('#mbar').hidden = false;
+}
+$('#mbar-book').addEventListener('click',()=>openBooking());
+$('#mbar-info').addEventListener('click',()=>$('#price-sec').scrollIntoView({behavior:'smooth',block:'center'}));
+$('#vlist').addEventListener('click',e=>{ const b=e.target.closest('button[data-v]'); if(!b) return; st.vehicle=b.dataset.v; st.picked=true; recalc(); });
+
+/* ---------- Controles ---------- */
+$('#services').innerHTML = SERVICES.map(s=>'<button type="button" class="chip" data-s="'+s+'" aria-pressed="'+(s===st.service)+'">'+s+'</button>').join('');
+$('#services').addEventListener('click',e=>{ const b=e.target.closest('[data-s]'); if(!b) return; st.service=b.dataset.s; $$('#services .chip').forEach(c=>c.setAttribute('aria-pressed',c===b?'true':'false')); });
+$('#tripseg').addEventListener('click',e=>{ const b=e.target.closest('[data-round]'); if(!b) return; st.round = b.dataset.round==='1';
+  $$('#tripseg button').forEach(x=>x.setAttribute('aria-pressed',x===b?'true':'false')); $('#ret-fields').hidden=!st.round; renderRouteStat(); recalc(); });
+['dep-date','dep-time','ret-date','ret-time'].forEach(id=>$('#'+id).addEventListener('change',()=>{
+  if(id==='dep-date' && $('#ret-date').value < $('#dep-date').value) $('#ret-date').value = $('#dep-date').value;
+  recalc();
+}));
+function setPax(n){ n = Math.max(1, Math.min(200, parseInt(n,10)||1)); st.pax=n; $('#pax').value=n; recalc(); }
+$('#pax-minus').addEventListener('click',()=>setPax(st.pax-1));
+$('#pax-plus').addEventListener('click',()=>setPax(st.pax+1));
+$('#pax').addEventListener('change',e=>setPax(e.target.value));
+$('#rough').addEventListener('change',e=>{ st.rough=e.target.checked; recalc(); });
+$('#swap').addEventListener('click',()=>{ const o=st.origin; st.origin=st.dest; st.dest=o; $('#origin-input').value=st.origin?st.origin.label:''; $('#dest-input').value=st.dest?st.dest.label:''; updateRoute(); });
+function renderQuick(){
+  $('#quick').innerHTML = (PLACES[T.region]||[]).slice(0,4).map((p,i)=>'<button type="button" class="chip quick" data-q="'+i+'">'+esc(p.label.replace('Aeropuerto José María Córdova','Aeropuerto JMC'))+'</button>').join('');
+}
+$('#quick').addEventListener('click',e=>{ const b=e.target.closest('[data-q]'); if(!b) return; const p=PLACES[T.region][+b.dataset.q]; setPoint(st.origin?'dest':'origin',p,true); });
+
+/* ---------- Reserva ---------- */
+const dlg = $('#dlg');
+let currentQuote = null;
+function tripText(){
+  const q = lastQuotes.find(x=>x.v.id===st.vehicle);
+  const dep = $('#dep-date').value.split('-').reverse().join('/')+' '+$('#dep-time').value;
+  const ret = st.round ? $('#ret-date').value.split('-').reverse().join('/')+' '+$('#ret-time').value : null;
+  return {q,dep,ret};
+}
+function openBooking(){
+  const {q,dep,ret} = tripText(); if(!q) return;
+  currentQuote = q;
+  $('#dlg-sum').innerHTML = '<span>'+esc(st.service)+' · '+(st.round?'Ida y regreso':'Solo ida')+' · '+st.pax+' pasajeros</span>'+
+    '<span>'+esc(st.origin.label)+' → '+esc(st.dest.label)+'</span>'+
+    '<span>Salida '+dep+(ret?' · Regreso '+ret:'')+'</span>'+
+    '<b class="num">'+(q.qty>1?q.qty+' × ':'')+esc(q.v.name)+' · '+money(q.total)+'</b>';
+  $('#book-form').hidden=false; $('#done').hidden=true; $('#f-err').hidden=true;
+  if(typeof dlg.showModal==='function') dlg.showModal(); else dlg.setAttribute('open','');
+}
+$('#dlg-close').addEventListener('click',()=>dlg.close());
+$('#book-form').addEventListener('submit',e=>{
+  e.preventDefault();
+  const name=$('#f-name').value.trim(), phone=$('#f-phone').value.replace(/\D/g,'');
+  const errs=[];
+  if(name.length<3) errs.push('escribe tu nombre');
+  if(!/^3\d{9}$/.test(phone)) errs.push('escribe un celular de 10 dígitos que empiece por 3');
+  if(!$('#f-ok').checked) errs.push('acepta la política de datos');
+  if(errs.length){ const t=errs.join(', '); $('#f-err').textContent='Para enviar: '+t.charAt(0)+t.slice(1)+'.'; $('#f-err').hidden=false; return; }
+  const now=new Date(); const id='COT-'+String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0')+'-'+String(Math.floor(Math.random()*900)+100);
+  const q=currentQuote; const {dep,ret}=tripText();
+  const co=$('#f-co').value.trim();
+  (store.leads[T.id] = store.leads[T.id]||[]).unshift({id,client:co?co+' · '+name:name,route:st.origin.label+' → '+st.dest.label,veh:(q.qty>1?q.qty+' × ':'')+q.v.name,total:q.total});
+  save(); renderLeads();
+  const msg = 'Hola '+T.name+', quiero confirmar la cotización '+id+'.\n'+
+    'Servicio: '+st.service+' ('+(st.round?'ida y regreso':'solo ida')+')\n'+
+    'Ruta: '+st.origin.label+' → '+st.dest.label+'\n'+
+    'Salida: '+dep+(ret?'\nRegreso: '+ret:'')+'\n'+
+    'Pasajeros: '+st.pax+'\nVehículo: '+(q.qty>1?q.qty+' × ':'')+q.v.name+'\n'+
+    'Valor estimado: '+money(q.total)+'\nNombre: '+name+(co?' ('+co+')':'');
+  $('#done-wa').href='https://wa.me/'+T.wa.replace(/\D/g,'')+'?text='+encodeURIComponent(msg);
+  $('#done-id').textContent=id;
+  $('#done-who').textContent=T.name+' te confirma disponibilidad y valor final.';
+  $('#book-form').hidden=true; $('#done').hidden=false;
+});
+$('#done-new').addEventListener('click',()=>{ dlg.close(); $('#book-form').reset(); });
+
+/* ---------- Marca blanca ---------- */
+function applyBrand(){
+  const r=document.documentElement.style;
+  r.setProperty('--brand',T.c1); r.setProperty('--brand-2',T.c2);
+  const wm=$('#wordmark');
+  if(T.id==='enrutamos' && T.name==='Enrutamos') wm.innerHTML='En<b>ruta</b>mos<small>Cotizador de viajes</small>';
+  else wm.innerHTML=esc(T.name)+'<small>Cotizador de viajes</small>';
+  document.title='Cotizador · '+T.name;
+  $('#panel-title').textContent='Panel de '+T.name;
+  if(routeLine) routeLine.setStyle({color:T.c1});
+}
+function renderTenantPickers(){
+  const ids=Object.keys(store.tenants);
+  $('#tenant-select').innerHTML=ids.map(id=>'<option value="'+id+'"'+(id===T.id?' selected':'')+'>'+esc(store.tenants[id].name)+(store.tenants[id].demo?' (demo)':'')+'</option>').join('');
+  $('#tenant-cards').innerHTML=ids.map(id=>{ const t=store.tenants[id];
+    return '<button type="button" class="tcard" data-t="'+id+'" aria-pressed="'+(id===T.id)+'"><span class="sw"><i style="background:'+t.c1+'"></i><i style="background:'+t.c2+'"></i></span><span><b>'+esc(t.name)+'</b><span>'+(t.demo?'Empresa de ejemplo · ':'')+esc(t.base.sub.split(',').pop().trim())+'</span></span></button>'; }).join('');
+}
+function switchTenant(id){
+  if(!store.tenants[id]) return;
+  store.current=id; T=store.tenants[id]; save();
+  st.picked=false; st.vehicle=null;
+  renderTenantPickers(); renderPanel(); renderQuick();
+  const places = PLACES[T.region]||[];
+  st.origin=Object.assign({},T.base); st.dest=Object.assign({},places[T.destIdx]||places[0]);
+  $('#origin-input').value=st.origin.label; $('#dest-input').value=st.dest.label;
+  applyBrand(); updateRoute();
+}
+$('#tenant-select').addEventListener('change',e=>switchTenant(e.target.value));
+$('#tenant-cards').addEventListener('click',e=>{ const b=e.target.closest('[data-t]'); if(b) switchTenant(b.dataset.t); });
+
+function renderPanel(){
+  $('#b-name').value=T.name; $('#b-c1').value=T.c1; $('#b-c2').value=T.c2; $('#b-wa').value=T.wa; $('#b-base').value=T.base.sub;
+  $('#tariffs').innerHTML=T.vehicles.map((v,i)=>'<tr><td class="vname">'+esc(v.name)+'</td>'+
+    ['cap','base','perKm','min','wait','night'].map(k=>'<td><input class="num" inputmode="numeric" id="t-'+i+'-'+k+'" data-i="'+i+'" data-k="'+k+'" value="'+v[k]+'" aria-label="'+esc(v.name)+' '+k+'"></td>').join('')+'</tr>').join('');
+  $('#s-night').value=T.s.night; $('#s-holiday').value=T.s.holiday; $('#s-rough').value=T.s.rough; $('#s-empty').value=T.s.empty; $('#s-free').value=T.s.freeWait;
+  $('#snippet').textContent='<!-- Cotizador '+T.name+' -->\n<script src="https://cotiza.tramo.co/widget.js"\n        data-empresa="'+T.id+'"\n        data-color="'+T.c1+'"><\/script>';
+  renderLeads();
+}
+function renderLeads(){
+  const rows=(store.leads[T.id]||[]).concat(T.id==='enrutamos'?EXAMPLE_LEADS:[]);
+  $('#leads').innerHTML = rows.length ? rows.map(l=>'<tr><td><span class="qid">'+esc(l.id)+'</span></td><td>'+esc(l.client)+'</td><td>'+esc(l.route)+'</td><td>'+esc(l.veh)+'</td><td class="num" style="text-align:right">'+money(l.total)+'</td><td><span class="st'+(l.ex?' ex':'')+'">'+(l.ex?'Ejemplo':'Nueva')+'</span></td></tr>').join('')
+    : '<tr><td colspan="6" class="note" style="padding:14px 6px">Todavía no hay solicitudes. Haz una reserva en la pestaña Cotizar y aparece aquí.</td></tr>';
+}
+$('#b-name').addEventListener('input',e=>{ T.name=e.target.value||'Mi empresa'; save(); applyBrand(); renderTenantPickers(); renderPanel(); $('#b-name').focus(); });
+$('#b-c1').addEventListener('input',e=>{ T.c1=e.target.value; save(); applyBrand(); renderTenantPickers(); });
+$('#b-c2').addEventListener('input',e=>{ T.c2=e.target.value; save(); applyBrand(); renderTenantPickers(); });
+$('#b-wa').addEventListener('change',e=>{ T.wa=e.target.value.replace(/\D/g,''); save(); });
+$('#b-base').addEventListener('change',e=>{ T.base.sub=e.target.value; save(); });
+$('#tariffs').addEventListener('input',e=>{ const t=e.target; if(!t.dataset.k) return; const n=parseInt(t.value.replace(/\D/g,''),10); if(isNaN(n)) return;
+  T.vehicles[+t.dataset.i][t.dataset.k]= t.dataset.k==='cap'? Math.max(1,n) : n; save(); recalc(); });
+[['s-night','night'],['s-holiday','holiday'],['s-rough','rough'],['s-empty','empty'],['s-free','freeWait']].forEach(([id,k])=>
+  $('#'+id).addEventListener('input',e=>{ const n=parseInt(e.target.value,10); if(isNaN(n)) return; T.s[k]=n; save(); recalc(); }));
+$('#copy-snippet').addEventListener('click',()=>{
+  const txt=$('#snippet').textContent;
+  const done=()=>toast('Código copiado');
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done,()=>{ selectSnippet(); toast('Selecciona y copia el código'); });
+  else { selectSnippet(); toast('Selecciona y copia el código'); }
+});
+function selectSnippet(){ const r=document.createRange(); r.selectNodeContents($('#snippet')); const s=getSelection(); s.removeAllRanges(); s.addRange(r); }
+let resetArmed=false;
+$('#reset').addEventListener('click',e=>{
+  if(!resetArmed){ resetArmed=true; e.target.textContent='Toca otra vez para confirmar'; setTimeout(()=>{resetArmed=false; e.target.textContent='Restablecer datos de ejemplo';},3500); return; }
+  store={tenants:defaultTenants(),current:'enrutamos',leads:{}}; save(); resetArmed=false; e.target.textContent='Restablecer datos de ejemplo';
+  switchTenant('enrutamos'); toast('Datos de ejemplo restablecidos');
+});
+
+/* ---------- Pestañas ---------- */
+function showView(v){
+  const cot = v==='cotizar';
+  $('#view-cotizar').hidden=!cot; $('#view-panel').hidden=cot;
+  $('#tab-cotizar').setAttribute('aria-selected',cot); $('#tab-panel').setAttribute('aria-selected',!cot);
+  if(cot) setTimeout(()=>{ map.invalidateSize(); if(st.route) map.fitBounds(L.latLngBounds(st.route.coords),{padding:[60,60],maxZoom:14}); },30);
+  else renderPanel();
+}
+$('#tab-cotizar').addEventListener('click',()=>showView('cotizar'));
+$('#tab-panel').addEventListener('click',()=>showView('panel'));
+
+let toastT=null;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2200); }
+
+/* ---------- Inicio ---------- */
+setupAC('origin'); setupAC('dest');
+switchTenant(T.id);
+})();
+</script>
+</body>
+</html>
